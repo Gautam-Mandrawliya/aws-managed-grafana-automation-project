@@ -1,0 +1,18 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS SNS Topic for Grafana Alert
+
+Resources:
+  AlertSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: aws-grafana-alert-topic
+      Subscription:
+        - Protocol: email
+          Endpoint: gautammandrawliya@gmail.com
+
+Outputs:
+  GrafanaAlertTopicArn:
+    Description: SNS Topic ARN
+    Value: !Ref AlertSNSTopic
+    Export:
+      Name: GrafanaAlertTopicArn

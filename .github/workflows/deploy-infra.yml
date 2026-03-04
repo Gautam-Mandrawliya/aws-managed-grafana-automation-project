@@ -1,0 +1,140 @@
+name: 01 - Deploy Infrastructure Stack
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allows manual trigger from GitHub Actions tab
+
+permissions:
+  id-token: write   
+  contents: read
+
+jobs:
+  # ============================================================
+  # 1 - DEPLOY INFRA
+  # ============================================================
+  deploy-infra:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # -------------------------------------------------------
+      # OIDC — no access keys needed, uses IAM Role directly
+      # -------------------------------------------------------
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4   
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }} 
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # -------------------------------------------------------
+      # Job 1 — Grafana Workspace
+      # -------------------------------------------------------
+      - name: Validate Grafana Template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/01-grafana-workspace.yaml
+
+      - name: Deploy Grafana Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/01-grafana-workspace.yaml \
+            --stack-name grafana-workspace \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      # -------------------------------------------------------
+      # Job 2 — SNS Alerts
+      # -------------------------------------------------------
+      - name: Validate SNS Template
+        run: |
+          aws cloudformation validate-template \
+           --template-body file://cloudformation/02-sns-alerts.yaml
+
+      - name: Deploy SNS Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/02-sns-alerts.yaml \
+            --stack-name sns-stack \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+  # ============================================================
+  # 2 - DEPLOY GRAFANA CONFIG
+  # ============================================================
+  deploy-grafana-configuration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # CONFIGURE AWS CREDENTIALS
+      # --------------------------------------------------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Fix Script Line Endings
+        run: sed -i 's/\r$//' scripts/*.sh
+    
+      # --------------------------------------------------
+      # Job 1 — SETUP
+      # --------------------------------------------------
+      - name: Setup - Fetch Exports and Create API Key
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: bash scripts/01-setup.sh
+
+      # --------------------------------------------------
+      # Job 2 — DATASOURCE
+      # --------------------------------------------------
+      - name: Stage 1 - Add CloudWatch Datasource
+        run: bash scripts/02-datasource.sh
+
+      # --------------------------------------------------
+      # Job 3 — CONTACT POINT
+      # --------------------------------------------------
+      - name: Stage 2 - Create SNS Contact Point
+        run: bash scripts/03-contact-point.sh
+
+      # --------------------------------------------------
+      # Job 4 — DASHBOARD
+      # --------------------------------------------------
+      - name: Stage 3 - Deploy Dashboard
+        run: bash scripts/04-dashboard.sh
+
+      # --------------------------------------------------
+      # Job 5 - DELETE TEMPORARY API KEY
+      # --------------------------------------------------
+      - name: Delete Temporary API Key
+        if: always()
+        run: |
+          aws grafana delete-workspace-api-key \
+            --workspace-id "$WORKSPACE_ID" \
+            --key-name "$KEY_NAME" \
+            --region ${{ secrets.AWS_REGION }} \
+            && echo "API key deleted" || echo "Key not found - OK"
+      
+      # -------------------------------------------------------
+      # Summary — prints all stack outputs at the end
+      # -------------------------------------------------------
+      - name: Print Stack Outputs
+        if: success()
+        run: |
+          echo ""
+          echo "===== GRAFANA STACK OUTPUTS ====="
+          aws cloudformation describe-stacks \
+            --stack-name grafana-workspace \
+            --query "Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}" \
+            --output table
+
+          echo ""
+          echo "===== SNS STACK OUTPUTS ====="
+          aws cloudformation describe-stacks \
+            --stack-name sns-stack \
+            --query "Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}" \
+            --output table
+            

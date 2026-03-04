@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AWS Managed Grafana Workspace
+  - SSO integration
+  - CloudWatch datasource
+  - SNS notification destination
+
+Parameters:
+  WorkspaceName:
+    Type: String
+    Default: my-grafana-workspace
+    Description: Name of the Grafana workspace
+
+Resources:
+  # ----------------------------------------------------------
+  # IAM ROLE AND PERMISSIONS FOR GRAFANA WORKSPACE
+  # ----------------------------------------------------------
+  GrafanaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: grafana-workspace-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: grafana.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ----------------------------------------------------------
+  # GRAFANA WORKSPACE 
+  # ----------------------------------------------------------
+  GrafanaWorkspace:
+    Type: AWS::Grafana::Workspace
+    DependsOn: GrafanaRole
+    Properties:
+      Name: !Ref WorkspaceName
+      AccountAccessType: CURRENT_ACCOUNT
+      AuthenticationProviders:
+        - AWS_SSO
+      PermissionType: SERVICE_MANAGED
+      DataSources:
+        - CLOUDWATCH
+      NotificationDestinations:
+        - SNS
+      RoleArn: !GetAtt GrafanaRole.Arn
+      Description: "Grafana workspace for AWS observability - managed by CloudFormation"
+
+# ============================================================
+# OUTPUTS
+# ============================================================
+Outputs:
+
+  GrafanaWorkspaceId:
+    Description: Grafana Workspace ID
+    Value: !Ref GrafanaWorkspace
+    Export:
+      Name: grafana-workspace-id
+
+  GrafanaWorkspaceEndpoint:
+    Description: Grafana Workspace URL - open this in your browser
+    Value: !Sub "https://${GrafanaWorkspace.Endpoint}"
+    Export:
+      Name: grafana-workspace-url
+
+  GrafanaRoleArn:
+    Description: IAM Role ARN used by Grafana workspace
+    Value: !GetAtt GrafanaRole.Arn
+    Export:
+      Name: grafana-role-arn
